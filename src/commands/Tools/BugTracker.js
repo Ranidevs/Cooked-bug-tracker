@@ -35,10 +35,10 @@ const {
 } = require("discord.js");
 
 // ─── CONFIG — fill these in ───────────────────────────────────────────────────
-const BOT_TOKEN      = "YOUR_BOT_TOKEN_HERE";      // Bot → Token
-const CLIENT_ID      = "YOUR_CLIENT_ID_HERE";      // General Information → Application ID
-const GUILD_ID       = "YOUR_GUILD_ID_HERE";       // Right-click server → Copy Server ID
-const BUG_CHANNEL_ID = "YOUR_BUG_CHANNEL_ID_HERE"; // Right-click #bug-reports → Copy Channel ID
+const BOT_TOKEN      = "";      // Bot → Token
+const CLIENT_ID      = "1513635235407855716";      // General Information → Application ID
+const GUILD_ID       = "1120845088906563684";       // Right-click server → Copy Server ID
+const BUG_CHANNEL_ID = "1498543961181126726"; // Right-click #bug-reports → Copy Channel ID
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ═══════════════════════════════════════════════════════════════════════════════
