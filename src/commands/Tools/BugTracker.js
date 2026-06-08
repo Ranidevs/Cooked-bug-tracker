@@ -1,194 +1,296 @@
-/**
- * ============================================================
- *  Discord Bug Report Bot — Discord.js v14
- *  Single-file version: drag this into your repo and go.
- * ============================================================
- *
- *  SETUP (one-time)
- *  ─────────────────────────────────────────────────────────
- *  1. npm install discord.js
- *
- *  2. Fill in the four constants in the CONFIG block below.
- *
- *  3. Register the /bug slash command (run once, then never again
- *     unless you change the command definition):
- *       node bug-bot.js --deploy
- *
- *  4. Start the bot:
- *       node bug-bot.js
- * ============================================================
- */
-
 "use strict";
 
+/**
+ * src/commands/tools/report.js
+ *
+ * Slash command: /report bug
+ *
+ * Flow:
+ *   1. User runs /report bug
+ *   2. A modal appears asking for a Bug Title and Bug Description
+ *   3. On modal submit, a red "Unresolved" embed is posted to BUG_REPORT_CHANNEL_ID
+ *      with a "Resolve" button underneath
+ *   4. A user with Manage Messages clicks Resolve:
+ *      - Embed turns green, status becomes "Resolved"
+ *      - Resolved By / Resolved At fields are added
+ *      - Button is disabled and relabelled "Resolved"
+ */
+
 const {
-  Client,
-  GatewayIntentBits,
+  SlashCommandBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ActionRowBuilder,
   EmbedBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ActionRowBuilder,
-  Events,
-  REST,
-  Routes,
-  SlashCommandBuilder,
+  PermissionFlagsBits,
+  time,
+  TimestampStyles,
 } = require("discord.js");
 
-// ─── CONFIG — fill these in ───────────────────────────────────────────────────
-const BOT_TOKEN      = "";      // Bot → Token
-const CLIENT_ID      = "1513635235407855716";      // General Information → Application ID
-const GUILD_ID       = "1120845088906563684";       // Right-click server → Copy Server ID
-const BUG_CHANNEL_ID = "1498543961181126726"; // Right-click #bug-reports → Copy Channel ID
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Config ───────────────────────────────────────────────────────────────────
+const BUG_REPORT_CHANNEL_ID = "1498543961181126726";
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  DEPLOY MODE  —  node bug-bot.js --deploy
-//  Registers the /bug slash command with Discord, then exits.
-// ═══════════════════════════════════════════════════════════════════════════════
-if (process.argv.includes("--deploy")) {
-  const command = new SlashCommandBuilder()
-    .setName("bug")
-    .setDescription("Submit a bug report to the bug-reports channel")
-    .addStringOption((opt) =>
-      opt
-        .setName("description")
-        .setDescription("Describe the bug you encountered")
-        .setRequired(true)
-        .setMinLength(10)   // Require at least 10 characters for quality reports
-        .setMaxLength(1000) // Stay within Discord embed field limits
-    )
-    .toJSON();
+// ─── Constants ────────────────────────────────────────────────────────────────
+// Custom IDs tie the modal submit and button click back to this command.
+const MODAL_ID         = "bug_report_modal";
+const INPUT_TITLE_ID   = "bug_title";
+const INPUT_DESC_ID    = "bug_description";
+const BUTTON_RESOLVE   = "bug_resolve";
 
-  const rest = new REST({ version: "10" }).setToken(BOT_TOKEN);
+// Embed colours
+const COLOR_UNRESOLVED = 0xe74c3c; // Red
+const COLOR_RESOLVED   = 0x2ecc71; // Green
 
-  (async () => {
-    try {
-      console.log("🔄 Registering /bug slash command...");
+// ─── Slash command definition ─────────────────────────────────────────────────
+const data = new SlashCommandBuilder()
+  .setName("report")
+  .setDescription("Reporting tools")
+  .addSubcommand((sub) =>
+    sub
+      .setName("bug")
+      .setDescription("Submit a bug report")
+  );
 
-      // Guild-scoped = instant (perfect for dev/production in one server).
-      // For multi-server bots swap to: Routes.applicationCommands(CLIENT_ID)
-      // — note that global commands take up to 1 hour to propagate.
-      await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), {
-        body: [command],
-      });
+// ─── Execute ──────────────────────────────────────────────────────────────────
+/**
+ * Called by your command handler when any /report subcommand is used.
+ * Only the "bug" subcommand is currently implemented.
+ *
+ * @param {import("discord.js").ChatInputCommandInteraction} interaction
+ */
+async function execute(interaction) {
+  const sub = interaction.options.getSubcommand();
 
-      console.log("✅ /bug command registered! You can now run: node bug-bot.js");
-    } catch (err) {
-      console.error("❌ Failed to register command:", err);
-    }
-    process.exit(0);
-  })();
-
-  return; // Stop executing the rest of the file in deploy mode
+  if (sub === "bug") {
+    await handleBugSubcommand(interaction);
+  }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  BOT MODE  —  node bug-bot.js
-// ═══════════════════════════════════════════════════════════════════════════════
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+// ─────────────────────────────────────────────────────────────────────────────
+//  /report bug  →  show modal
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Responds to /report bug by presenting a modal with two text inputs.
+ *
+ * @param {import("discord.js").ChatInputCommandInteraction} interaction
+ */
+async function handleBugSubcommand(interaction) {
+  // Build the Bug Title input (single line)
+  const titleInput = new TextInputBuilder()
+    .setCustomId(INPUT_TITLE_ID)
+    .setLabel("Bug Title")
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder("Brief summary of the bug")
+    .setMinLength(5)
+    .setMaxLength(100)
+    .setRequired(true);
 
-// ─── Ready ────────────────────────────────────────────────────────────────────
-client.once(Events.ClientReady, (c) => {
-  console.log(`✅ Logged in as ${c.user.tag}`);
-  console.log(`   Listening for /bug in guild ${GUILD_ID}`);
-  console.log(`   Bug reports → channel ${BUG_CHANNEL_ID}`);
-});
+  // Build the Bug Description input (multi-line paragraph)
+  const descInput = new TextInputBuilder()
+    .setCustomId(INPUT_DESC_ID)
+    .setLabel("Bug Description")
+    .setStyle(TextInputStyle.Paragraph)
+    .setPlaceholder("Steps to reproduce, expected vs. actual behaviour, etc.")
+    .setMinLength(20)
+    .setMaxLength(1000)
+    .setRequired(true);
 
-// ─── Interactions ─────────────────────────────────────────────────────────────
-client.on(Events.InteractionCreate, async (interaction) => {
+  // Each TextInput must live inside its own ActionRow
+  const titleRow = new ActionRowBuilder().addComponents(titleInput);
+  const descRow  = new ActionRowBuilder().addComponents(descInput);
 
-  // ── /bug slash command ──────────────────────────────────────────────────────
-  if (interaction.isChatInputCommand() && interaction.commandName === "bug") {
-    const description = interaction.options.getString("description");
+  const modal = new ModalBuilder()
+    .setCustomId(MODAL_ID)
+    .setTitle("Bug Report")
+    .addComponents(titleRow, descRow);
 
-    // Look up the bug-reports channel from the guild's cache
-    const bugChannel = interaction.guild.channels.cache.get(BUG_CHANNEL_ID);
-    if (!bugChannel) {
-      return interaction.reply({
-        content: "❌ Could not find the bug-reports channel. Double-check `BUG_CHANNEL_ID`.",
-        ephemeral: true,
-      });
-    }
+  // Show the modal — no further code runs here; the submit is handled below
+  await interaction.showModal(modal);
+}
 
-    // Red embed — status: Unresolved
-    const embed = new EmbedBuilder()
-      .setTitle("🐛 Bug Report")
-      .setColor(0xe74c3c) // Red
-      .addFields(
-        { name: "👤 Reporter",    value: interaction.user.username, inline: true },
-        { name: "🔴 Status",      value: "Unresolved",              inline: true },
-        { name: "📝 Description", value: description }
-      )
-      .setTimestamp()
-      .setFooter({ text: `Reported by ${interaction.user.username}` });
+// ─────────────────────────────────────────────────────────────────────────────
+//  Modal submit  →  post embed to bug-report channel
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Must be called from your interactionCreate event handler when
+ * interaction.isModalSubmit() && interaction.customId === MODAL_ID.
+ *
+ * @param {import("discord.js").ModalSubmitInteraction} interaction
+ */
+async function handleModalSubmit(interaction) {
+  const bugTitle = interaction.fields.getTextInputValue(INPUT_TITLE_ID);
+  const bugDesc  = interaction.fields.getTextInputValue(INPUT_DESC_ID);
+  const reporter = interaction.user;
+  const now      = new Date();
 
-    // Resolve button (red = action needed)
-    const resolveButton = new ButtonBuilder()
-      .setCustomId("resolve_bug")
-      .setLabel("✅ Resolve")
-      .setStyle(ButtonStyle.Danger);
-
-    const row = new ActionRowBuilder().addComponents(resolveButton);
-
-    try {
-      await bugChannel.send({ embeds: [embed], components: [row] });
-
-      // Only the reporter sees this confirmation
-      await interaction.reply({
-        content: `✅ Bug report submitted to <#${BUG_CHANNEL_ID}>!`,
-        ephemeral: true,
-      });
-    } catch (err) {
-      console.error("Failed to post bug report:", err);
-      await interaction.reply({
-        content: "❌ Something went wrong while sending the bug report.",
-        ephemeral: true,
-      });
-    }
+  // Locate the bug-report channel
+  const channel = interaction.guild.channels.cache.get(BUG_REPORT_CHANNEL_ID);
+  if (!channel) {
+    return interaction.reply({
+      content: "❌ Bug-report channel not found. Please contact an administrator.",
+      ephemeral: true,
+    });
   }
 
-  // ── Resolve button ──────────────────────────────────────────────────────────
-  if (interaction.isButton() && interaction.customId === "resolve_bug") {
-    const originalEmbed = interaction.message.embeds[0];
-
-    // Clone the embed, switch to green, update Status field, add resolver name
-    const resolvedEmbed = EmbedBuilder.from(originalEmbed)
-      .setColor(0x2ecc71) // Green
-      .spliceFields(1, 1, {          // Swap out the Status field (index 1)
-        name: "🟢 Status",
-        value: "Resolved",
+  // Build the unresolved (red) embed
+  const embed = new EmbedBuilder()
+    .setTitle(`🐛 Bug Report — ${bugTitle}`)
+    .setColor(COLOR_UNRESOLVED)
+    .addFields(
+      {
+        name: "📝 Description",
+        value: bugDesc,
+      },
+      {
+        name: "👤 Reported By",
+        value: `${reporter.username} (<@${reporter.id}>)`,
         inline: true,
-      })
-      .addFields({
-        name: "🔧 Resolved By",
-        value: interaction.user.username,
+      },
+      {
+        name: "📅 Date Reported",
+        value: time(now, TimestampStyles.ShortDateTime),
         inline: true,
-      })
-      .setFooter({
-        text: `${originalEmbed.footer?.text ?? ""} • Resolved by ${interaction.user.username}`,
-      });
+      },
+      {
+        name: "🔴 Status",
+        value: "Unresolved",
+        inline: true,
+      }
+    )
+    .setFooter({ text: `User ID: ${reporter.id}` })
+    .setTimestamp(now);
 
-    // Disable the button so it can't be clicked again
-    const disabledButton = new ButtonBuilder()
-      .setCustomId("resolve_bug")
-      .setLabel("✅ Resolved")
-      .setStyle(ButtonStyle.Success)
-      .setDisabled(true);
+  // Resolve button — Success style (green) so it stands out as a positive action
+  const resolveButton = new ButtonBuilder()
+    .setCustomId(BUTTON_RESOLVE)
+    .setLabel("Resolve")
+    .setStyle(ButtonStyle.Success);
 
-    const updatedRow = new ActionRowBuilder().addComponents(disabledButton);
+  const row = new ActionRowBuilder().addComponents(resolveButton);
 
-    try {
-      // Edit the original bug-report message in place
-      await interaction.update({ embeds: [resolvedEmbed], components: [updatedRow] });
-    } catch (err) {
-      console.error("Failed to resolve bug report:", err);
-      await interaction.reply({
-        content: "❌ Could not update the bug report.",
-        ephemeral: true,
-      });
-    }
+  try {
+    await channel.send({ embeds: [embed], components: [row] });
+
+    // Ephemeral confirmation so the reporter knows it worked
+    await interaction.reply({
+      content: `✅ Your bug report has been submitted to <#${BUG_REPORT_CHANNEL_ID}>.`,
+      ephemeral: true,
+    });
+  } catch (err) {
+    console.error("[report.js] Failed to post bug report embed:", err);
+    await interaction.reply({
+      content: "❌ Something went wrong while submitting your report. Please try again.",
+      ephemeral: true,
+    });
   }
-});
+}
 
-// ─── Start ────────────────────────────────────────────────────────────────────
-client.login(BOT_TOKEN);
+// ─────────────────────────────────────────────────────────────────────────────
+//  Resolve button  →  update embed and disable button
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Must be called from your interactionCreate event handler when
+ * interaction.isButton() && interaction.customId === BUTTON_RESOLVE.
+ *
+ * @param {import("discord.js").ButtonInteraction} interaction
+ */
+async function handleResolveButton(interaction) {
+  // ── Permission check ────────────────────────────────────────────────────────
+  // Only users with Manage Messages may resolve reports
+  if (!interaction.memberPermissions.has(PermissionFlagsBits.ManageMessages)) {
+    return interaction.reply({
+      content: "❌ You need the **Manage Messages** permission to resolve bug reports.",
+      ephemeral: true,
+    });
+  }
+
+  const originalEmbed = interaction.message.embeds[0];
+  if (!originalEmbed) {
+    return interaction.reply({
+      content: "❌ Could not find the original embed to update.",
+      ephemeral: true,
+    });
+  }
+
+  const resolver = interaction.user;
+  const now      = new Date();
+
+  // ── Rebuild the embed ───────────────────────────────────────────────────────
+  // Clone all existing fields, then splice the Status field to "Resolved"
+  // and append Resolved By / Resolved At.
+
+  // Find and replace the Status field (keep all others intact)
+  const updatedFields = originalEmbed.fields.map((field) => {
+    if (field.name === "🔴 Status") {
+      return { name: "🟢 Status", value: "Resolved", inline: true };
+    }
+    return field; // Preserve Reporter, Date Reported, Description unchanged
+  });
+
+  // Append resolution metadata
+  updatedFields.push(
+    {
+      name: "🔧 Resolved By",
+      value: `${resolver.username} (<@${resolver.id}>)`,
+      inline: true,
+    },
+    {
+      name: "✅ Resolved At",
+      value: time(now, TimestampStyles.ShortDateTime),
+      inline: true,
+    }
+  );
+
+  const resolvedEmbed = EmbedBuilder.from(originalEmbed)
+    .setColor(COLOR_RESOLVED) // Switch to green
+    .setFields(updatedFields);
+
+  // ── Disable the button ──────────────────────────────────────────────────────
+  const disabledButton = new ButtonBuilder()
+    .setCustomId(BUTTON_RESOLVE)
+    .setLabel("Resolved")
+    .setStyle(ButtonStyle.Success)
+    .setDisabled(true);
+
+  const updatedRow = new ActionRowBuilder().addComponents(disabledButton);
+
+  try {
+    // interaction.update() edits the message and acks the interaction in one call
+    await interaction.update({
+      embeds: [resolvedEmbed],
+      components: [updatedRow],
+    });
+  } catch (err) {
+    console.error("[report.js] Failed to update resolved embed:", err);
+    await interaction.reply({
+      content: "❌ Could not mark the report as resolved. Please try again.",
+      ephemeral: true,
+    });
+  }
+}
+
+// ─── Exports ──────────────────────────────────────────────────────────────────
+module.exports = {
+  data,
+  execute,
+  // Export the interaction sub-handlers so your interactionCreate event
+  // can route modal submits and button clicks to this file:
+  //
+  //   const { handleModalSubmit, handleResolveButton } = require("./commands/tools/report");
+  //
+  //   if (interaction.isModalSubmit() && interaction.customId === "bug_report_modal") {
+  //     return handleModalSubmit(interaction);
+  //   }
+  //   if (interaction.isButton() && interaction.customId === "bug_resolve") {
+  //     return handleResolveButton(interaction);
+  //   }
+  handleModalSubmit,
+  handleResolveButton,
+  // Exporting the custom IDs lets your handler do the routing without
+  // hardcoding strings outside of this file:
+  MODAL_ID,
+  BUTTON_RESOLVE,
+};
