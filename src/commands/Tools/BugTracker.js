@@ -31,7 +31,7 @@ const {
 } = require("discord.js");
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-const BUG_REPORT_CHANNEL_ID = "1498543961181126726";
+const BUG_REPORT_CHANNEL_ID = "PUT_CHANNEL_ID_HERE";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 // Custom IDs tie the modal submit and button click back to this command.
