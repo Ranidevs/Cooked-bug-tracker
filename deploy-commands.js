@@ -3,6 +3,9 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
+console.log("CLIENT_ID =", process.env.CLIENT_ID);
+console.log("TOKEN =", process.env.TOKEN);
+
 const commands = [];
 const commandsPath = path.join(__dirname, 'src/commands');
 
