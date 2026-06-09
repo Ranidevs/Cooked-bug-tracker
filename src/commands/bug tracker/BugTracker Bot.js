@@ -46,13 +46,8 @@ const COLOR_RESOLVED   = 0x2ecc71; // Green
 
 // ─── Slash command definition ─────────────────────────────────────────────────
 const data = new SlashCommandBuilder()
-  .setName("report")
-  .setDescription("Reporting tools")
-  .addSubcommand((sub) =>
-    sub
-      .setName("bug")
-      .setDescription("Submit a bug report")
-  );
+  .setName("bug")
+  .setDescription("Submit a bug report");
 
 // ─── Execute ──────────────────────────────────────────────────────────────────
 /**
@@ -62,11 +57,7 @@ const data = new SlashCommandBuilder()
  * @param {import("discord.js").ChatInputCommandInteraction} interaction
  */
 async function execute(interaction) {
-  const sub = interaction.options.getSubcommand();
-
-  if (sub === "bug") {
-    await handleBugSubcommand(interaction);
-  }
+  await handleBugSubcommand(interaction);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
